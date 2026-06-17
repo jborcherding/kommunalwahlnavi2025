@@ -1,0 +1,10 @@
+project:
+  type: website
+  output-dir: _site
+  render:
+    - dashboard.qmd
+
+format:
+  html:
+    theme: cosmo
+    toc: false

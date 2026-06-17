@@ -1,0 +1,390 @@
+---
+pagetitle: "Kommunalwahlnavi 2025 – Dashboard"
+description: "Interaktives Dashboard zu den Parteienpositionen bei der NRW-Kommunalwahl 2025"
+lang: de
+format:
+  html:
+    theme: cosmo
+    page-layout: custom
+    toc: false
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+#| context: setup
+#| include: false
+library(dplyr)
+
+data <- read.csv("voto_kommwahl_bridge.csv", stringsAsFactors = FALSE)
+data$valuation <- as.numeric(data$valuation)
+
+data <- data %>%
+  select(these_politikfeld, these_title, statement,
+         party_name, gmd_name, valuation, explanation) %>%
+  filter(!is.na(valuation))
+
+ojs_define(raw_data = data)
+```
+
+```{css}
+/* Vollbreiten-Wrapper statt zentriertem Quarto-Container */
+.kwn-wrap {
+  width: 100%;
+  max-width: none;
+  padding: 0 1.5rem 2rem 1.5rem;
+  box-sizing: border-box;
+}
+.kwn-header {
+  margin: 0.75rem 0 1rem 0;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #e6e6ea;
+}
+.kwn-header h1 {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: #222;
+}
+.kwn-header p {
+  margin: 0.15rem 0 0 0;
+  font-size: 0.95rem;
+  color: #666;
+}
+.kwn-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+.kwn-sidebar {
+  position: sticky;
+  top: 1rem;
+  padding: 1rem;
+  background: #f7f7f9;
+  border-radius: 8px;
+  border: 1px solid #e6e6ea;
+}
+.kwn-main {
+  min-width: 0;
+  overflow: visible;
+}
+/* Tooltips und Plot-Elemente müssen über SVG-Grenzen hinausragen dürfen */
+.kwn-main svg,
+.kwn-main figure,
+.kwn-main figure > * {
+  overflow: visible !important;
+}
+.kwn-statement {
+  font-weight: 600;
+  font-size: 1.05rem;
+  margin: 0 0 1rem 0;
+  line-height: 1.45;
+  padding: 0.6rem 0.9rem;
+  background: #eef3f8;
+  border-left: 4px solid #2c6fb2;
+  border-radius: 4px;
+}
+/* Quarto-Container dürfen keine Tooltips abschneiden */
+main.content,
+div.quarto-container,
+.page-columns,
+#quarto-content {
+  overflow: visible !important;
+}
+.kwn-footer {
+  margin: 1.5rem 0 0 0;
+  font-size: 0.8rem;
+  color: #999;
+  text-align: right;
+}
+@media (max-width: 900px) {
+  .kwn-layout { grid-template-columns: 1fr; }
+  .kwn-sidebar { position: static; }
+  .kwn-wrap { padding: 0 0.75rem 2rem 0.75rem; }
+}
+```
+
+::: {.kwn-wrap}
+
+::: {.kwn-header}
+<h1>Kommunalwahl-Navi NRW 2025</h1>
+<p>Positionen der Parteien nach Städten</p>
+:::
+
+::: {.kwn-layout}
+
+::: {.kwn-sidebar}
+
+```{ojs}
+viewof selected_field = Inputs.select(politikfelder, { label: "Politikfeld" })
+```
+
+```{ojs}
+viewof selected_thesis = Inputs.select(theses_for_field, { label: "These" })
+```
+
+```{ojs}
+viewof selected_parties = Inputs.checkbox(available_parties, {
+  label: "Parteien",
+  value: ["CDU"]
+})
+```
+
+<p style="font-size:0.8rem; color:#666; margin:0.75rem 0 0 0; line-height:1.55;">
+  Hover über einen Punkt für die Begründung der Partei.
+</p>
+
+:::
+
+::: {.kwn-main}
+
+```{ojs}
+html`<div class="kwn-statement" id="kwn-stmt">${(current_statement || "Bitte eine These auswählen.").replace(/\{location\}/g, cities_sorted[0] ?? "der Stadt")}</div>`
+```
+
+```{ojs}
+{
+  const tip = document.createElement("div");
+  Object.assign(tip.style, {
+    position: "fixed",
+    background: "white",
+    border: "1px solid #ccc",
+    borderRadius: "6px",
+    padding: "8px 12px",
+    fontSize: "12px",
+    lineHeight: "1.45",
+    fontFamily: "system-ui, sans-serif",
+    pointerEvents: "none",
+    zIndex: "9999",
+    maxWidth: "340px",
+    whiteSpace: "normal",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.18)",
+    display: "none"
+  });
+  document.body.appendChild(tip);
+  invalidation.then(() => tip.remove());
+
+  if (filtered.length === 0) {
+    const msg = !selected_parties || selected_parties.length === 0
+      ? "Bitte mindestens eine Partei auswählen."
+      : "Für diese These liegen keine Daten vor.";
+    return html`<div style="padding:2rem; color:#666; text-align:center; border:1px dashed #ddd; border-radius:6px;">${msg}</div>`;
+  }
+
+  const chart = Plot.plot({
+    width: plot_width,
+    height: Math.max(500, cities_sorted.length * 36 + 180),
+    marginLeft: 200,
+    marginRight: 80,
+    marginTop: 70,
+    marginBottom: 100,
+    style: { fontSize: "14px" },
+    x: {
+      domain: [0.5, 5.5],
+      ticks: [1, 2, 3, 4, 5],
+      tickFormat: d => cat_labels[d - 1],
+      label: null,
+      grid: true
+    },
+    y: {
+      domain: cities_sorted,
+      label: null
+    },
+    color: {
+      domain: Object.keys(party_color_map),
+      range: Object.values(party_color_map),
+      legend: true
+    },
+    marks: [
+      Plot.ruleX([1, 2, 3, 4, 5], { stroke: "#eee" }),
+      Plot.dot(filtered_jittered, {
+        x: "x_jitter",
+        y: "gmd_name",
+        fill: "party_name",
+        stroke: "#444",
+        strokeWidth: 0.8,
+        r: 7
+      }),
+      Plot.dot(filtered_jittered, Plot.pointer({
+        x: "x_jitter",
+        y: "gmd_name",
+        fill: "party_name",
+        stroke: "black",
+        strokeWidth: 2,
+        r: 9
+      }))
+    ]
+  });
+
+  const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  function updateStatement(city) {
+    const el = document.getElementById("kwn-stmt");
+    if (!el) return;
+    const stmt = current_statement || "Bitte eine These auswählen.";
+    el.textContent = stmt.replace(/\{location\}/g, city ?? cities_sorted[0] ?? "der Stadt");
+  }
+
+  chart.addEventListener("input", () => {
+    const d = chart.value;
+    updateStatement(d ? d.gmd_name : null);
+    if (!d) { tip.style.display = "none"; return; }
+    tip.innerHTML =
+      `<div style="margin-bottom:6px; font-size:11px; color:#555; line-height:1.6">` +
+        `<b>${esc(d.party_name)}</b> &middot; ${esc(d.gmd_name)} &middot; ${esc(d.cat_label)}` +
+      `</div>` +
+      `<div style="font-size:12px; line-height:1.55; color:${d.explanation ? "#222" : "#999"}; font-style:${d.explanation ? "normal" : "italic"}">${esc(d.explanation || "Diese Partei hat keinen Begründungstext abgegeben.")}</div>`;
+    tip.style.display = "block";
+  });
+
+  chart.addEventListener("pointermove", (e) => {
+    if (tip.style.display === "none") return;
+    const gap = 14;
+    const x = e.clientX + gap;
+    const y = e.clientY + gap;
+    const tw = tip.offsetWidth;
+    const th = tip.offsetHeight;
+    tip.style.left = (x + tw > window.innerWidth  ? e.clientX - tw - gap : x) + "px";
+    tip.style.top  = (y + th > window.innerHeight ? e.clientY - th - gap : y) + "px";
+  });
+
+  chart.addEventListener("pointerleave", () => {
+    tip.style.display = "none";
+    updateStatement(null);
+  });
+
+  return chart;
+}
+```
+
+:::
+
+:::
+
+<p class="kwn-footer">Datenquelle: Kommunalwahl-Navi NRW 2025</p>
+
+:::
+
+```{ojs}
+//| output: false
+data = transpose(raw_data)
+```
+
+```{ojs}
+//| output: false
+politikfelder = Array.from(new Set(data.map(d => d.these_politikfeld))).sort()
+```
+
+```{ojs}
+//| output: false
+party_order = ["CDU", "SPD", "AfD", "GRÜNE", "DIE LINKE", "FDP", "BSW", "VOLT", "Die PARTEI"]
+```
+
+```{ojs}
+//| output: false
+available_parties = party_order.filter(p => data.some(d => d.party_name === p))
+```
+
+```{ojs}
+//| output: false
+party_color_map = ({
+  "CDU":        "#000000",
+  "SPD":        "#E3000F",
+  "AfD":        "#009EE0",
+  "GRÜNE":      "#1AA037",
+  "DIE LINKE":  "#BE3075",
+  "FDP":        "#FFED00",
+  "BSW":        "#8B008B",
+  "VOLT":       "#61259e",
+  "Die PARTEI": "#C9002B"
+})
+```
+
+```{ojs}
+//| output: false
+cat_labels = ["1 – keine Zustimmung", "2", "3 – neutral", "4", "5 – volle Zustimmung"]
+```
+
+```{ojs}
+//| output: false
+val_to_cat = function(v) {
+  if (v === 0)   return 1;
+  if (v === 25)  return 2;
+  if (v === 50)  return 3;
+  if (v === 75)  return 4;
+  if (v === 100) return 5;
+  return null;
+}
+```
+
+
+```{ojs}
+//| output: false
+theses_for_field = Array.from(new Set(
+  data.filter(d => d.these_politikfeld === selected_field)
+      .map(d => d.these_title)
+)).sort()
+```
+
+```{ojs}
+//| output: false
+filtered = (selected_thesis && selected_parties && selected_parties.length > 0)
+  ? data
+      .filter(d => d.these_title === selected_thesis &&
+                   selected_parties.includes(d.party_name))
+      .map(d => {
+        const c = val_to_cat(d.valuation);
+        return { ...d, cat_num: c, cat_label: c !== null ? cat_labels[c - 1] : null };
+      })
+      .filter(d => d.cat_num !== null)
+  : []
+```
+
+```{ojs}
+//| output: false
+filtered_jittered = {
+  const groups = d3.group(filtered, d => d.gmd_name + "|" + d.cat_num);
+  const out = [];
+  for (const [, items] of groups) {
+    const n = items.length;
+    items.forEach((it, i) => {
+      const off = n === 1 ? 0 : -0.2 + (0.4 * i) / (n - 1);
+      out.push({ ...it, x_jitter: it.cat_num + off });
+    });
+  }
+  return out;
+}
+```
+
+```{ojs}
+//| output: false
+cities_sorted = Array.from(new Set(filtered.map(d => d.gmd_name))).sort()
+```
+
+```{ojs}
+//| output: false
+current_statement = filtered.length > 0 ? filtered[0].statement : ""
+```
+
+```{ojs}
+//| output: false
+// Misst die Breite des Main-Containers und aktualisiert reaktiv bei Resize
+plot_width = {
+  const el = document.querySelector(".kwn-main");
+  if (!el) return 900;
+  const initial = el.getBoundingClientRect().width;
+  return Generators.observe(notify => {
+    notify(Math.max(600, Math.floor(initial)));
+    const ro = new ResizeObserver(entries => {
+      for (const e of entries) {
+        notify(Math.max(600, Math.floor(e.contentRect.width)));
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+}
+```
