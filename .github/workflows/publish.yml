@@ -23,13 +23,9 @@ jobs:
           r-version: "4.4.0"
 
       - name: Install R dependencies
-        uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          packages: |
-            any::dplyr
-            any::stringr
-            any::rmarkdown
-            any::knitr
+        run: |
+          install.packages(c("dplyr", "rmarkdown", "knitr"), repos = "https://cloud.r-project.org")
+        shell: Rscript {0}
 
       - name: Render and Publish
         uses: quarto-dev/quarto-actions/publish@v2
