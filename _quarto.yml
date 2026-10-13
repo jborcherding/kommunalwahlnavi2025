@@ -3,6 +3,8 @@ project:
   output-dir: _site
   render:
     - dashboard.qmd
+  resources:
+    - "7mvt511gc9nh9y/*"
 
 format:
   html:
